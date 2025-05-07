@@ -3,7 +3,6 @@ package chromekiosk
 import (
 	"context"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"net/http"
@@ -28,11 +27,12 @@ type Monitor struct {
 const (
 	CageBin = "/usr/bin/cage"
 
-	envPath       = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-	xdgRuntimeDir = "/run"
-	userHome      = "/run/home"
-	chromeDataDir = "/run/chrome-data"
-	proxyListen   = "127.0.0.1:8080"
+	envPath         = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+	xdgRuntimeDir   = "/run"
+	userHome        = "/run/home"
+	chromeDataDir   = "/run/chrome-data"
+	proxyListenAddr = "127.0.0.1:8443"
+	proxyListenUrl  = "https://" + proxyListenAddr
 )
 
 func (m *Monitor) Init() error {
@@ -64,7 +64,7 @@ func (m *Monitor) Init() error {
 			ExecArgsPrefix: []string{CageBin, "--"},
 
 			ExtraFlags: BrowserFlags{
-				"proxy-server": "http://" + proxyListen,
+				"proxy-server": proxyListenUrl,
 			},
 
 			CmdEnviron: []string{
@@ -74,7 +74,6 @@ func (m *Monitor) Init() error {
 				"WLR_LIBINPUT_NO_DEVICES=1",
 			},
 
-			// TraceLog:   log.Default(),
 			ConsoleLog: log.Default(),
 		},
 
@@ -111,7 +110,10 @@ func (m *Monitor) Run(ctx context.Context) error {
 
 	go func() {
 		// FIXME
-		log.Fatal(m.runProxy())
+		err := runTLSProxy(ctx, m.proxyListener, m.ProxyHandler)
+		if err != nil {
+			log.Printf("runTLSProxy: %s", err)
+		}
 	}()
 
 	go m.runBrowser(ctx)
@@ -145,7 +147,7 @@ func (m *Monitor) setup() error {
 	}
 
 	err := m.Con.Do(func() error {
-		ln, err := net.Listen("tcp", proxyListen)
+		ln, err := net.Listen("tcp", proxyListenAddr)
 		if err != nil {
 			return err
 		}
@@ -155,23 +157,6 @@ func (m *Monitor) setup() error {
 	})
 	if err != nil {
 		return err
-	}
-
-	return nil
-}
-
-func (m *Monitor) runProxy() error {
-	h := m.ProxyHandler
-	if h == nil {
-		h = http.HandlerFunc(m.defaultProxyHandler)
-	}
-
-	var srv = http.Server{
-		Handler: h,
-	}
-
-	if err := srv.Serve(m.proxyListener); err != nil {
-		return fmt.Errorf("proxy Serve: %w", err)
 	}
 
 	return nil
@@ -188,51 +173,4 @@ func (m *Monitor) runBrowser(ctx context.Context) (err error) {
 	}
 
 	return m.Browser.Run(ctx)
-}
-
-func (m *Monitor) defaultProxyHandler(w http.ResponseWriter, r *http.Request) {
-	if IsInternalChromeRequest(r) {
-		http.Error(w, "", http.StatusGatewayTimeout)
-		return
-	}
-
-	log.Printf("proxy: %s %s", r.Method, r.URL)
-
-	if r.Method == "CONNECT" {
-		http.Error(w, "", http.StatusGatewayTimeout) // 504
-		return
-	}
-
-	if r.Method != "GET" {
-		http.Error(w, "Bad method", http.StatusMethodNotAllowed)
-		return
-	}
-
-	if r.URL.Scheme == "" {
-		log.Printf(" missing scheme, skipping")
-		http.Error(w, "", http.StatusForbidden)
-		return
-	}
-
-	resp, err := http.Get(r.URL.String())
-	if err != nil {
-		log.Printf("Get: %s", err)
-		http.Error(w, "Failed to fetch the URL: "+err.Error(), http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	hdr := w.Header()
-	// Copy response headers
-	for key, values := range resp.Header {
-		for _, value := range values {
-			hdr.Add(key, value)
-		}
-	}
-
-	// Set the correct status code
-	w.WriteHeader(resp.StatusCode)
-
-	// Copy the response body
-	io.Copy(w, resp.Body)
 }
