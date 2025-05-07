@@ -16,10 +16,15 @@ import (
 	"github.com/chromedp/chromedp"
 )
 
+const (
+	remoteDebuggingPort = "9222"
+	remoteDebuggingAddr = "127.0.0.1:9222"
+)
+
 var DefaultBrowserFlags = BrowserFlags{
 	"kiosk":                          true,
 	"no-default-browser-check":       true,
-	"remote-debugging-port":          "9222",
+	"remote-debugging-port":          remoteDebuggingPort,
 	"no-sandbox":                     true,
 	"disable-infobars":               true,
 	"noerrdialogs":                   true,

@@ -22,6 +22,7 @@ func main() {
 		imageFlag  = flag.String("image", "", "`path` to container squashfs image")
 		rundirFlag = flag.String("rundir", "/run/chromekiosk", "`path` to rundir")
 		urlFlag    = flag.String("url", "blank:yellow", "starting url")
+		debugFlag  = flag.String("remotedebug", "127.0.0.1:9222", "`addr:port` for Chrome Remote Debugger")
 	)
 	flag.Parse()
 
@@ -101,6 +102,14 @@ func main() {
 	go func() {
 		log.Fatal(http.ListenAndServe(*httpFlag, mux))
 	}()
+
+	if addr := *debugFlag; addr != "" {
+		go func() {
+			if err := m.ListenRemoteDebugger(addr); err != nil {
+				log.Printf("ListenRemoteDebugger: %s", err)
+			}
+		}()
+	}
 
 RunLoop:
 	for {

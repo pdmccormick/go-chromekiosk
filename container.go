@@ -171,8 +171,9 @@ func (c *Container) NsEnter() error {
 }
 
 func (c *Container) Do(runFunc func() error) error {
-	var errc = make(chan error, 0)
+	var errc = make(chan error, 1)
 	go func() {
+		defer close(errc)
 		err := c.NsEnter()
 		if err == nil {
 			err = runFunc()

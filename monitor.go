@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"path/filepath"
+	"time"
 )
 
 type Monitor struct {
@@ -173,4 +174,49 @@ func (m *Monitor) runBrowser(ctx context.Context) (err error) {
 	}
 
 	return m.Browser.Run(ctx)
+}
+
+const dialRemoteTimeout = 2 * time.Second
+
+func (m *Monitor) DialRemoteDebugger(ctx context.Context) (conn net.Conn, err error) {
+	ctx, cancel := context.WithTimeout(ctx, dialRemoteTimeout)
+	defer cancel()
+
+	m.Con.Do(func() error {
+		var d net.Dialer
+		conn, err = d.DialContext(ctx, "tcp", remoteDebuggingAddr)
+		return nil
+	})
+	return
+}
+
+func (m *Monitor) ListenRemoteDebugger(addr string) error {
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	return m.ServeRemoteDebugger(context.Background(), ln)
+}
+
+func (m *Monitor) ServeRemoteDebugger(ctx context.Context, ln net.Listener) error {
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			return err
+		}
+		go m.handleDebugProxy(ctx, conn)
+	}
+	return nil
+}
+
+func (m *Monitor) handleDebugProxy(ctx context.Context, client net.Conn) error {
+	defer client.Close()
+
+	server, err := m.DialRemoteDebugger(ctx)
+	if err != nil {
+		return err
+	}
+	defer server.Close()
+
+	return teeConn(client, server)
 }
