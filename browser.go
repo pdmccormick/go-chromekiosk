@@ -14,7 +14,6 @@ import (
 
 	cdpruntime "github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
-	"github.com/go-json-experiment/json/jsontext"
 )
 
 var DefaultBrowserFlags = BrowserFlags{
@@ -245,28 +244,25 @@ func (br *Browser) dataUrlHtml(html string) string {
 }
 
 func (br *Browser) listenTarget(ev any) {
-	tracer := br.TraceLog
+	if logger := br.ConsoleLog; logger != nil {
+		if ev, ok := ev.(*cdpruntime.EventConsoleAPICalled); ok {
+			var args []any
+			for _, arg := range ev.Args {
+				if v := arg.Value; v != nil {
+					args = append(args, v)
+				}
+			}
 
-	switch ev := ev.(type) {
-	case *cdpruntime.EventConsoleAPICalled:
-		var args []jsontext.Value
-		for _, arg := range ev.Args {
-			args = append(args, arg.Value)
+			if len(args) > 0 {
+				logger.Printf("console %s: %+v", ev.Type, args)
+			}
 		}
-		out, _ := json.Marshal(args)
+	}
 
-		logger := tracer
-		if l := br.ConsoleLog; l != nil {
-			logger = l
-		}
-
-		if logger != nil {
-			logger.Printf("ConsoleLog: %s", string(out))
-		}
-
-	default:
-		if tracer != nil {
-			tracer.Printf("Event %T: %+v", ev, ev)
+	if logger := br.TraceLog; logger != nil {
+		out, err := json.Marshal(ev)
+		if err == nil {
+			logger.Printf("Event %T: %+v", ev, string(out))
 		}
 	}
 }
