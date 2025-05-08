@@ -131,16 +131,49 @@ func isInternalChromeRequestStr(urlStr string) bool {
 }
 
 type Proxy struct {
-	Logger              *log.Logger
+	Log                 *log.Logger
 	Dialer              net.Dialer
 	Transport           http.RoundTripper
 	AllowChromeInternal bool
+	HostMap             map[string]string
 }
 
-var _ http.Handler = (*Proxy)(nil)
+var (
+	_ http.RoundTripper = (*Proxy)(nil)
+	_ http.Handler      = (*Proxy)(nil)
+)
 
 var DefaultProxyHandler = Proxy{
-	Logger: log.Default(),
+	Log: log.Default(),
+	HostMap: map[string]string{
+		"kiosk.localhost":       "127.0.0.1",
+		"chromekiosk.localhost": "127.0.0.1",
+	},
+}
+
+func (pr *Proxy) RoundTrip(req *http.Request) (*http.Response, error) {
+	tr := pr.Transport
+	if tr == nil {
+		tr = http.DefaultTransport
+	}
+
+	if pr.HostMap != nil {
+		if target, ok := pr.HostMap[req.URL.Hostname()]; ok {
+			u := *req.URL
+
+			if port := u.Port(); port != "" {
+				u.Host = net.JoinHostPort(target, port)
+			} else {
+				u.Host = target
+			}
+
+			req0 := *req
+			req0.URL = &u
+			req = &req0
+		}
+	}
+
+	return tr.RoundTrip(req)
 }
 
 func (pr *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -160,11 +193,9 @@ func (pr *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (pr *Proxy) logf(format string, v ...any) {
-	l := pr.Logger
-	if l == nil {
-		return
+	if l := pr.Log; l != nil {
+		l.Output(2, fmt.Sprintf(format, v...))
 	}
-	l.Output(2, fmt.Sprintf(format, v...))
 }
 
 func (pr *Proxy) passthru(w http.ResponseWriter, r *http.Request) {
@@ -194,12 +225,7 @@ func (pr *Proxy) passthru(w http.ResponseWriter, r *http.Request) {
 
 	req.Header = r.Header.Clone()
 
-	tr := pr.Transport
-	if tr == nil {
-		tr = http.DefaultTransport
-	}
-
-	resp, err := tr.RoundTrip(req)
+	resp, err := pr.RoundTrip(req)
 	if err != nil {
 		pr.logf("proxy: %s %s: RoundTrip %s", r.Method, r.URL, err)
 		http.Error(w, err.Error(), http.StatusBadGateway)
